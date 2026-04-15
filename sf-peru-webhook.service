@@ -1,0 +1,21 @@
+[Unit]
+Description=Off-platform Salesforce PERU webhook bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python -u __APP_DIR__/salesforce_peru_bridge.py --env __CONFIG_FILE__ --serve
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

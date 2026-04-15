@@ -1,0 +1,22 @@
+[Unit]
+Description=Peru Incident Management Process
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__RUN_USER__
+Group=__RUN_GROUP__
+WorkingDirectory=__APP_DIR__
+ExecStart=__APP_DIR__/.venv/bin/python -u __APP_DIR__/salesforce_peru_arm_emulator.py --env __CONFIG_FILE__
+Restart=always
+RestartSec=3
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=__STATE_DIR__
+
+[Install]
+WantedBy=multi-user.target
