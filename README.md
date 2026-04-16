@@ -2,6 +2,9 @@
 
 This is the freeze-safe path for the Salesforce PERU workaround.
 
+Repo version: `2026.04.16.1`
+Release history: [CHANGELOG.md](CHANGELOG.md)
+
 It does not require changing the existing `genericJsonV2` DTI mechanism on the
 ServiceNow side. Salesforce keeps posting directly to the existing
 `genericJsonV2` endpoint, and the workaround operates only on alerts that
