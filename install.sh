@@ -115,8 +115,10 @@ slugify() {
 env_value_from_file() {
   local file="$1"
   local key="$2"
+  local raw_value=""
   [[ -f "$file" ]] || return 0
-  awk -v wanted="$key" '
+  raw_value="$(
+    awk -v wanted="$key" '
     $0 ~ ("^" wanted "[[:space:]]*[:=]") {
       value = $0
       sub(/^[^:=]*[:=][[:space:]]*/, "", value)
@@ -126,10 +128,40 @@ env_value_from_file() {
       exit
     }
   ' "$file"
+  )"
+  decode_secret_value_if_needed "$raw_value"
 }
 
 env_file_value() {
   env_value_from_file "$SOURCE_ENV_FILE" "$1"
+}
+
+is_secret_env_key() {
+  case "$1" in
+    SN_USERNAME|SN_PASSWORD|PUSH_CONNECTOR_USERNAME|PUSH_CONNECTOR_PASSWORD|PUSH_CONNECTOR_BEARER_TOKEN|WEBHOOK_AUTH_TOKEN|user|password)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+decode_secret_value_if_needed() {
+  local value="$1"
+  if [[ "$value" == OBFMD5:* ]]; then
+    "$PYTHON_BIN" "$SCRIPT_DIR/secret_codec.py" decode "$value"
+    return 0
+  fi
+  printf '%s' "$value"
+}
+
+encode_secret_value_if_needed() {
+  local key="$1"
+  local value="$2"
+  if [[ -z "$value" || "$value" == OBFMD5:* ]] || ! is_secret_env_key "$key"; then
+    printf '%s' "$value"
+    return 0
+  fi
+  "$PYTHON_BIN" "$SCRIPT_DIR/secret_codec.py" encode "$value"
 }
 
 seed_value_is_placeholder() {
@@ -183,6 +215,7 @@ set_env_file_value() {
   local value="$3"
   local tmp
 
+  value="$(encode_secret_value_if_needed "$key" "$value")"
   value="${value//$'\r'/}"
   value="${value//$'\n'/}"
   tmp="$(mktemp)"
@@ -556,10 +589,26 @@ maybe_prompt_for_config() {
 }
 
 sync_derived_env_values() {
+  local secret_key=""
+  local secret_value=""
   set_env_file_value "$SOURCE_ENV_FILE" "STATE_FILE" "$STATE_FILE"
   set_env_file_value "$SOURCE_ENV_FILE" "AUTO_CREATE_SERVICE_OFFERINGS" "false"
   set_env_file_value "$SOURCE_ENV_FILE" "ENABLE_TAGGING" "false"
   set_env_file_value "$SOURCE_ENV_FILE" "ENABLE_DTI_FALLBACK" "false"
+  for secret_key in \
+    SN_USERNAME \
+    SN_PASSWORD \
+    PUSH_CONNECTOR_USERNAME \
+    PUSH_CONNECTOR_PASSWORD \
+    PUSH_CONNECTOR_BEARER_TOKEN \
+    WEBHOOK_AUTH_TOKEN \
+    user \
+    password; do
+    secret_value="$(env_value_from_file "$SOURCE_ENV_FILE" "$secret_key")"
+    if [[ -n "$secret_value" ]] && ! seed_value_is_placeholder "$secret_key" "$secret_value"; then
+      set_env_file_value "$SOURCE_ENV_FILE" "$secret_key" "$secret_value"
+    fi
+  done
 }
 
 cleanup_legacy_source_env_file() {
@@ -706,6 +755,7 @@ copy_runtime_files() {
   echo "[1/7] Deploying runtime files to $APP_DIR ..."
   $SUDO install -d -m 0755 "$APP_DIR"
   $SUDO install -m 0644 "$SCRIPT_DIR/salesforce_peru_arm_emulator.py" "$APP_DIR/salesforce_peru_arm_emulator.py"
+  $SUDO install -m 0644 "$SCRIPT_DIR/secret_codec.py" "$APP_DIR/secret_codec.py"
   $SUDO install -m 0644 "$SCRIPT_DIR/requirements.txt" "$APP_DIR/requirements.txt"
   $SUDO install -m 0644 "$SCRIPT_DIR/README.md" "$APP_DIR/README.md"
   $SUDO rm -f "$APP_DIR/.env.example"

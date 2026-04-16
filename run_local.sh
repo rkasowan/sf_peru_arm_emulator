@@ -8,7 +8,9 @@ STATE_FILE_DEFAULT="${SCRIPT_DIR}/state.local.json"
 
 env_value() {
   local key="$1"
-  awk -F= -v wanted="$key" '
+  local raw_value=""
+  raw_value="$(
+    awk -F= -v wanted="$key" '
     {
       current = $1
       gsub(/^[[:space:]]+|[[:space:]]+$/, "", current)
@@ -22,6 +24,12 @@ env_value() {
       exit
     }
   ' "$ROOT_ENV_FILE"
+  )"
+  if [[ "$raw_value" == OBFMD5:* ]]; then
+    python3 "$SCRIPT_DIR/secret_codec.py" decode "$raw_value"
+    return 0
+  fi
+  printf '%s' "$raw_value"
 }
 
 if [[ ! -f "$ROOT_ENV_FILE" ]]; then

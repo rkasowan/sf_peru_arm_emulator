@@ -2,6 +2,13 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.8 - 2026-04-16
+
+- added a shared `secret_codec.py` helper and support for `OBFMD5:...` env values so sensitive credentials can be stored obfuscated instead of plain text
+- updated the runtime to decode obfuscated env credentials before authenticating to ServiceNow
+- updated the installer to preserve prompt defaults while writing known secret keys back in obfuscated form, even on non-interactive installs
+- updated `run_local.sh` and `send_sample_payload.sh` so local helper flows still work with obfuscated credentials in the root `.env`
+
 ## 2026.04.16.7 - 2026-04-16
 
 - changed direct incident creation to try the minimal payload first again, then standard and rich fallbacks, so insert ACL quirks are less likely to block incident creation

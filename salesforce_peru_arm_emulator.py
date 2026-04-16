@@ -37,6 +37,12 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import requests
 
+try:
+    from secret_codec import decode_if_needed
+except Exception:
+    def decode_if_needed(value: str) -> str:
+        return value
+
 UTC = timezone.utc
 LOGGER = logging.getLogger("sf_peru_arm_emulator")
 SYS_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
@@ -69,7 +75,7 @@ def load_env_file(path: str, override: bool = False) -> None:
             continue
         if value and len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
             value = value[1:-1]
-        os.environ[key] = value
+        os.environ[key] = decode_if_needed(value)
 
 KV_RE = re.compile(
     r"[\"']?([A-Za-z0-9_ \-/\.]+)[\"']?\s*[:=]\s*(?:[\"']([^\"']*)[\"']|([^,\n\r}]+))"
@@ -195,7 +201,7 @@ class Config:
     @staticmethod
     def from_env(args: argparse.Namespace) -> "Config":
         def env(name: str, default: str = "") -> str:
-            return os.getenv(name, default).strip()
+            return decode_if_needed(os.getenv(name, default)).strip()
 
         def env_bool(name: str, default: bool) -> bool:
             raw = os.getenv(name)
