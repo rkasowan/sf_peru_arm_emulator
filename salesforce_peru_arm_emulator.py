@@ -1465,7 +1465,7 @@ class IncidentLocator:
         return None
 
     def _search_by_external_case(self, case_number: str, created_after: datetime) -> Optional[IncidentRef]:
-        if not case_number:
+        if not case_number or not self.cfg.incident_external_case_field:
             return None
         query = f"{self.cfg.incident_external_case_field}={escape_query_value(case_number)}^sys_created_on>={to_sn_datetime(created_after)}^ORDERBYDESCsys_created_on"
         rows = self.client.table_get(
@@ -1533,7 +1533,7 @@ class ARMEmulator:
     def _resolve_incident_external_case_field(self) -> str:
         configured = str(self.cfg.incident_external_case_field or "").strip()
         if is_disabled_config_value(configured):
-            return "u_external_salesforce_case_id"
+            return ""
         return configured or "u_external_salesforce_case_id"
 
     def _resolve_incident_generating_alert_field(self) -> str:
@@ -1556,7 +1556,10 @@ class ARMEmulator:
             LOGGER.info('Push connector URL: %s', self.cfg.push_connector_url)
         else:
             LOGGER.info('DTI fallback: disabled')
-        LOGGER.info('Incident external case field: %s', self.cfg.incident_external_case_field)
+        if self.cfg.incident_external_case_field:
+            LOGGER.info('Incident external case field: %s', self.cfg.incident_external_case_field)
+        else:
+            LOGGER.info('Incident external case field: disabled')
         if self.cfg.incident_generating_alert_field:
             LOGGER.info('Incident generating alert field: %s', self.cfg.incident_generating_alert_field)
         else:
@@ -2512,9 +2515,9 @@ class ARMEmulator:
             "description": description,
         }
         return [
-            ("rich", rich),
-            ("standard", standard),
             ("minimal", minimal),
+            ("standard", standard),
+            ("rich", rich),
         ]
 
     def _create_incident_direct(
@@ -2594,8 +2597,10 @@ class ARMEmulator:
         patch: Dict[str, Any] = {
             "short_description": short_description,
             "description": description,
-            self.cfg.incident_external_case_field: sf.case_number,
         }
+        external_case_field = self.cfg.incident_external_case_field
+        if external_case_field and sf.case_number:
+            patch[external_case_field] = sf.case_number
         if self.cfg.incident_generating_alert_field and alert_sys_id:
             patch[self.cfg.incident_generating_alert_field] = alert_sys_id
         if ci.sys_id:
@@ -2612,7 +2617,14 @@ class ARMEmulator:
             patch["caller_id"] = self.cfg.salesforce_user_sys_id
         patch.update(self._incident_extra_static_fields())
 
-        optional_field = self.cfg.incident_generating_alert_field
+        optional_fields = {
+            field_name
+            for field_name in (
+                self.cfg.incident_generating_alert_field,
+                self.cfg.incident_external_case_field,
+            )
+            if field_name
+        }
         try:
             self.client.table_update(self.cfg.incident_table, incident.sys_id, patch)
             LOGGER.info("patched incident %s (%s)", incident.number or incident.sys_id, incident.sys_id)
@@ -2627,7 +2639,7 @@ class ARMEmulator:
 
         applied_fields: List[str] = []
         failed_fields: List[str] = []
-        optional_field_disabled = False
+        disabled_optional_fields: List[str] = []
 
         for field_name, field_value in patch.items():
             try:
@@ -2635,12 +2647,15 @@ class ARMEmulator:
                 applied_fields.append(field_name)
             except Exception as exc:
                 failed_fields.append(field_name)
-                if optional_field and field_name == optional_field:
-                    self.cfg.incident_generating_alert_field = ""
-                    optional_field_disabled = True
+                if field_name in optional_fields:
+                    if field_name == self.cfg.incident_generating_alert_field:
+                        self.cfg.incident_generating_alert_field = ""
+                    if field_name == self.cfg.incident_external_case_field:
+                        self.cfg.incident_external_case_field = ""
+                    disabled_optional_fields.append(field_name)
                     LOGGER.warning(
                         "disabled optional incident field %s for the rest of this run after patch rejection: %s",
-                        optional_field,
+                        field_name,
                         exc,
                     )
                     continue
@@ -2657,8 +2672,8 @@ class ARMEmulator:
                 f"incident patch failed for {incident.number or incident.sys_id}; no fields were accepted"
             )
 
-        if optional_field_disabled:
-            patch.pop(optional_field, None)
+        for field_name in disabled_optional_fields:
+            patch.pop(field_name, None)
 
         if failed_fields:
             LOGGER.warning(

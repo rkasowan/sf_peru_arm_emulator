@@ -2,7 +2,7 @@
 
 This is the freeze-safe path for the Salesforce PERU workaround.
 
-Repo version: `2026.04.16.5`
+Repo version: `2026.04.16.7`
 Release history: [CHANGELOG.md](CHANGELOG.md)
 
 It does not require changing the existing `genericJsonV2` DTI mechanism on the
@@ -29,7 +29,8 @@ case-insensitively.
   the alert, so it does not depend on custom event routing or a modified source
   / type mapping
 - prefers direct incident creation through the `incident` table API when the
-  current environment allows it
+  current environment allows it, starting with a minimal create payload and
+  enriching the incident afterward
 - falls back to the existing DTI connector flow only when direct incident
   creation fails, then patches the resulting incident afterward
 - ships with DTI fallback disabled by default to avoid duplicate incidents when
@@ -42,8 +43,8 @@ case-insensitively.
 - feeds `assignment_group` into DTI from the service offering support group,
   then the offering L2/L3 custom group fields, then an optional configured
   dummy fallback
-- sets the external Salesforce case field, or falls back to `correlation_id`
-  when that custom field does not exist
+- sets the external Salesforce case field when that field is writable, or you
+  can disable it with `INCIDENT_EXTERNAL_CASE_FIELD=false`
 - stamps the linked alert into `u_generating_alert` when that incident field exists
 - leaves PINC tagging disabled by default; if tagging is enabled and the API
   rejects it, tagging is turned off for the rest of that run

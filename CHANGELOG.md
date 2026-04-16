@@ -2,6 +2,13 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.7 - 2026-04-16
+
+- changed direct incident creation to try the minimal payload first again, then standard and rich fallbacks, so insert ACL quirks are less likely to block incident creation
+- made `INCIDENT_EXTERNAL_CASE_FIELD` truly disable-able with values like `false`, and skip external-case searches when that field is disabled
+- stopped treating the external Salesforce case field as a mandatory post-create incident patch field; if that field is rejected, it is disabled for the rest of the run and the rest of the incident enrichment continues
+- documented the external-case-field disable switch in `.env.example` and refreshed the README version and behavior notes
+
 ## 2026.04.16.6 - 2026-04-16
 
 - made direct incident creation more robust by trying rich, standard, and minimal create payloads before giving up
