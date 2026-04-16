@@ -2,6 +2,11 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.3 - 2026-04-16
+
+- fixed installer reruns so `SN_INSTANCE_URL`, `SN_USERNAME`, `SN_PASSWORD`, and other prompted values default from the deployed config instead of the temporary `.env.example` staging placeholders
+- kept persistent source env files working by preferring any non-placeholder values already present there before falling back to `/etc/<service>/.env`
+
 ## 2026.04.16.2 - 2026-04-16
 
 - switched incident creation to prefer direct `incident` table API inserts and only fall back to DTI when direct create fails

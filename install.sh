@@ -132,18 +132,49 @@ env_file_value() {
   env_value_from_file "$SOURCE_ENV_FILE" "$1"
 }
 
+seed_value_is_placeholder() {
+  local key="$1"
+  local value="$2"
+
+  case "$key" in
+    SN_INSTANCE_URL)
+      [[ -z "$value" || "$value" == "https://your-instance.service-now.com" ]]
+      ;;
+    SN_USERNAME)
+      [[ -z "$value" || "$value" == your_* ]]
+      ;;
+    SN_PASSWORD)
+      [[ -z "$value" || "$value" == your_* ]]
+      ;;
+    PUSH_CONNECTOR_URL)
+      [[ -z "$value" || "$value" == "https://your-instance.service-now.com/api/sn_em_connector/em/inbound_event?source=genericJsonV2" ]]
+      ;;
+    *)
+      [[ -z "$value" ]]
+      ;;
+  esac
+}
+
 seed_env_value() {
   local key="$1"
   local value=""
+  local fallback=""
+  local candidate_file=""
 
-  value="$(env_value_from_file "$SOURCE_ENV_FILE" "$key")"
-  if [[ -z "$value" && -f "$CONFIG_FILE" ]]; then
-    value="$(env_value_from_file "$CONFIG_FILE" "$key")"
-  fi
-  if [[ -z "$value" ]]; then
-    value="$(env_value_from_file "$SCRIPT_DIR/.env.example" "$key")"
-  fi
-  printf '%s' "$value"
+  for candidate_file in "$SOURCE_ENV_FILE" "$CONFIG_FILE" "$SCRIPT_DIR/.env.example"; do
+    [[ -n "$candidate_file" && -f "$candidate_file" ]] || continue
+    value="$(env_value_from_file "$candidate_file" "$key")"
+    [[ -n "$value" ]] || continue
+    if [[ -z "$fallback" ]]; then
+      fallback="$value"
+    fi
+    if ! seed_value_is_placeholder "$key" "$value"; then
+      printf '%s' "$value"
+      return 0
+    fi
+  done
+
+  printf '%s' "$fallback"
 }
 
 set_env_file_value() {
@@ -353,26 +384,7 @@ prompt_yes_no() {
 }
 
 looks_like_placeholder() {
-  local key="$1"
-  local value="$2"
-
-  case "$key" in
-    SN_INSTANCE_URL)
-      [[ -z "$value" || "$value" == "https://your-instance.service-now.com" ]]
-      ;;
-    SN_USERNAME)
-      [[ -z "$value" || "$value" == your_* ]]
-      ;;
-    SN_PASSWORD)
-      [[ -z "$value" || "$value" == your_* ]]
-      ;;
-    PUSH_CONNECTOR_URL)
-      [[ -z "$value" || "$value" == "https://your-instance.service-now.com/api/sn_em_connector/em/inbound_event?source=genericJsonV2" ]]
-      ;;
-    *)
-      [[ -z "$value" ]]
-      ;;
-  esac
+  seed_value_is_placeholder "$1" "$2"
 }
 
 default_push_connector_url() {

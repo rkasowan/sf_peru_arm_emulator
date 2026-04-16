@@ -2,7 +2,7 @@
 
 This is the freeze-safe path for the Salesforce PERU workaround.
 
-Repo version: `2026.04.16.2`
+Repo version: `2026.04.16.3`
 Release history: [CHANGELOG.md](CHANGELOG.md)
 
 It does not require changing the existing `genericJsonV2` DTI mechanism on the
@@ -113,7 +113,8 @@ it. Before the prompts, the installer can also walk you through an optional
 interactive legacy cleanup so you can approve deletion of old config, state,
 and old-prefix service files one item at a time. After install, it runs the
 alert probe and leaves the service disabled until you explicitly approve
-starting it. For automation, use
+starting it. On reruns, prompted values now default from the deployed
+`/etc/<service>/.env` when that file already has real values. For automation, use
 `INSTANCE_PROFILE=uat ./install.sh --non-interactive`.
 
 If you already know you want it enabled immediately, use:
