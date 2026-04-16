@@ -2038,20 +2038,38 @@ class ARMEmulator:
         prev_incident = str(existing.get("last_incident_link") or "")
         prev_fingerprint = str(existing.get("last_fingerprint") or "")
 
+        unchanged_retry_reason = ""
         if prev_fingerprint == fingerprint:
-            LOGGER.debug("alert %s unchanged, skipping", alert_number or alert_sys_id)
-            return
-
-        create_reason = self._decide_create_reason(bucket, task_sys_id, prev_bucket, prev_task, existing)
-        LOGGER.info(
-            "alert=%s state=%s task=%s prev_state=%s prev_task=%s create_reason=%s",
-            alert_number or alert_sys_id,
-            bucket,
-            task_sys_id or "<empty>",
-            prev_bucket or "<none>",
-            prev_task or "<empty>",
-            create_reason or "<skip>",
-        )
+            unchanged_retry_reason = self._unchanged_alert_retry_reason(bucket, task_sys_id, existing)
+            if not unchanged_retry_reason:
+                LOGGER.info(
+                    "alert=%s unchanged state=%s task=%s last_action=%s skipping",
+                    alert_number or alert_sys_id,
+                    bucket,
+                    task_sys_id or "<empty>",
+                    existing.get("last_action") or "<none>",
+                )
+                return
+            LOGGER.info(
+                "alert=%s unchanged state=%s task=%s last_action=%s retry_reason=%s",
+                alert_number or alert_sys_id,
+                bucket,
+                task_sys_id or "<empty>",
+                existing.get("last_action") or "<none>",
+                unchanged_retry_reason,
+            )
+            create_reason = unchanged_retry_reason
+        else:
+            create_reason = self._decide_create_reason(bucket, task_sys_id, prev_bucket, prev_task, existing)
+            LOGGER.info(
+                "alert=%s state=%s task=%s prev_state=%s prev_task=%s create_reason=%s",
+                alert_number or alert_sys_id,
+                bucket,
+                task_sys_id or "<empty>",
+                prev_bucket or "<none>",
+                prev_task or "<empty>",
+                create_reason or "<skip>",
+            )
 
         state_record = {
             **existing,
@@ -2079,6 +2097,9 @@ class ARMEmulator:
 
                 try:
                     incident_ref = self._create_incident_direct(
+                        alert=full_alert,
+                        sf=sf,
+                        offering=offering,
                         ci=ci,
                         assignment_group=assignment_group,
                         short_description=short_description,
@@ -2236,6 +2257,20 @@ class ARMEmulator:
             )
 
         self.state.set_alert(alert_sys_id, state_record)
+
+    def _unchanged_alert_retry_reason(
+        self,
+        bucket: str,
+        current_task: str,
+        existing: Dict[str, Any],
+    ) -> str:
+        if bucket != "open":
+            return ""
+        if current_task:
+            return ""
+        if existing.get("last_action") == "error":
+            return "retry_after_previous_error"
+        return ""
 
     def _decide_create_reason(
         self,
@@ -2402,31 +2437,121 @@ class ARMEmulator:
 
     def _build_direct_incident_create_payload(
         self,
+        alert: Dict[str, Any],
+        sf: SalesforcePayload,
+        offering: ServiceOfferingRef,
         ci: CIChoice,
         assignment_group: AssignmentGroupRef,
         short_description: str,
         description: str,
     ) -> Dict[str, Any]:
+        alert_number = first_non_empty(raw_value(alert.get("number")), display_value(alert.get("number")))
         payload: Dict[str, Any] = {
             "short_description": short_description,
             "description": description,
+            "impact": "2",
+            "urgency": "2",
+            "category": "Software",
+            "subcategory": "Monitoring Alert",
+            "work_notes": "Direct Incident Create Via Peru Incident Management Process",
         }
         if ci.sys_id:
             payload["cmdb_ci"] = ci.sys_id
         if assignment_group.sys_id:
             payload["assignment_group"] = assignment_group.sys_id
+        if offering.service_sys_id:
+            payload["business_service"] = offering.service_sys_id
+        if offering.offering_sys_id:
+            payload["service_offering"] = offering.offering_sys_id
+        if self.cfg.set_assigned_to and self.cfg.salesforce_user_sys_id:
+            payload["assigned_to"] = self.cfg.salesforce_user_sys_id
+        if self.cfg.set_caller_id and self.cfg.salesforce_user_sys_id:
+            payload["caller_id"] = self.cfg.salesforce_user_sys_id
+        if alert_number:
+            payload["incident_created_from"] = alert_number
         payload.update(self._incident_extra_static_fields())
         return payload
 
+    def _direct_incident_create_payload_candidates(
+        self,
+        alert: Dict[str, Any],
+        sf: SalesforcePayload,
+        offering: ServiceOfferingRef,
+        ci: CIChoice,
+        assignment_group: AssignmentGroupRef,
+        short_description: str,
+        description: str,
+    ) -> List[Tuple[str, Dict[str, Any]]]:
+        rich = self._build_direct_incident_create_payload(
+            alert=alert,
+            sf=sf,
+            offering=offering,
+            ci=ci,
+            assignment_group=assignment_group,
+            short_description=short_description,
+            description=description,
+        )
+        standard = {
+            k: v
+            for k, v in rich.items()
+            if k
+            in {
+                "short_description",
+                "description",
+                "cmdb_ci",
+                "assignment_group",
+                "impact",
+                "urgency",
+                "category",
+                "subcategory",
+                "work_notes",
+            }
+        }
+        minimal = {
+            "short_description": short_description,
+            "description": description,
+        }
+        return [
+            ("rich", rich),
+            ("standard", standard),
+            ("minimal", minimal),
+        ]
+
     def _create_incident_direct(
         self,
+        alert: Dict[str, Any],
+        sf: SalesforcePayload,
+        offering: ServiceOfferingRef,
         ci: CIChoice,
         assignment_group: AssignmentGroupRef,
         short_description: str,
         description: str,
     ) -> IncidentRef:
-        payload = self._build_direct_incident_create_payload(ci, assignment_group, short_description, description)
-        created = self.client.table_create(self.cfg.incident_table, payload)
+        created: Dict[str, Any] = {}
+        last_error: Optional[Exception] = None
+        create_mode = ""
+        for create_mode, payload in self._direct_incident_create_payload_candidates(
+            alert=alert,
+            sf=sf,
+            offering=offering,
+            ci=ci,
+            assignment_group=assignment_group,
+            short_description=short_description,
+            description=description,
+        ):
+            try:
+                created = self.client.table_create(self.cfg.incident_table, payload)
+                break
+            except Exception as exc:
+                last_error = exc
+                LOGGER.warning(
+                    "direct incident create failed using %s payload; trying next fallback: %s",
+                    create_mode,
+                    exc,
+                )
+        else:
+            raise RuntimeError(f"incident table create failed for all payload modes: {last_error}")
+
         sys_id = first_non_empty(
             raw_value(created.get("sys_id")),
             display_value(created.get("sys_id")),
@@ -2445,7 +2570,12 @@ class ARMEmulator:
                 number = first_non_empty(display_value(incident.get("number")), raw_value(incident.get("number")))
             except Exception:
                 LOGGER.warning("created incident %s directly but could not read back its number immediately", sys_id)
-        LOGGER.info("created incident %s (%s) directly via incident table API", number or sys_id, sys_id)
+        LOGGER.info(
+            "created incident %s (%s) directly via incident table API using %s payload",
+            number or sys_id,
+            sys_id,
+            create_mode or "unknown",
+        )
         return IncidentRef(sys_id=sys_id, number=number)
 
     def _patch_incident(

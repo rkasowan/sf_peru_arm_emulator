@@ -2,6 +2,13 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.6 - 2026-04-16
+
+- made direct incident creation more robust by trying rich, standard, and minimal create payloads before giving up
+- fixed the direct-create call path so the richer payload builder receives the alert, service offering, and Salesforce context it needs
+- added INFO-level logging for unchanged alerts so silent fingerprint skips are visible in normal logs
+- retry unchanged open alerts after a prior error instead of skipping them forever when the fingerprint has not changed
+
 ## 2026.04.16.5 - 2026-04-16
 
 - added the source alert short description and alert description to the rendered incident description so the original alert text is preserved in the incident record
