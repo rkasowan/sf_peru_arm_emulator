@@ -2,7 +2,7 @@
 """
 Peru Incident Management Process worker for:
   source = salesforce
-  type contains Amazon
+  type contains Amazon or peru
 
 What it does:
 - Polls em_alert for matching alerts updated since the last watermark.
@@ -41,7 +41,7 @@ UTC = timezone.utc
 LOGGER = logging.getLogger("sf_peru_arm_emulator")
 SYS_ID_RE = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 INC_NUMBER_RE = re.compile(r"\bINC\d{4,}\b", re.IGNORECASE)
-DTI_HELPER_MESSAGE_KEY_PREFIX = "PIMP-DTI"
+DTI_HELPER_MESSAGE_KEY_PREFIX = "INCHELPER-DTI"
 DTI_HELPER_METRIC_NAME = "peru_dti_helper"
 
 
@@ -143,7 +143,7 @@ class Config:
     label_entry_table: str = "label_entry"
 
     alert_source: str = "salesforce"
-    alert_type_contains: str = "Amazon"
+    alert_type_contains: str = "Amazon,peru"
     alert_query_extra: str = ""
     poll_interval_seconds: int = 3
     query_overlap_seconds: int = 45
@@ -232,7 +232,7 @@ class Config:
             cmdb_table=env("CMDB_TABLE", "cmdb_ci"),
             label_entry_table=env("LABEL_ENTRY_TABLE", "label_entry"),
             alert_source=env("ALERT_SOURCE", "salesforce"),
-            alert_type_contains=env("ALERT_TYPE_CONTAINS", "Amazon"),
+            alert_type_contains=env("ALERT_TYPE_CONTAINS", "Amazon,peru"),
             alert_query_extra=env("ALERT_QUERY_EXTRA", ""),
             poll_interval_seconds=env_int("POLL_INTERVAL_SECONDS", 3),
             query_overlap_seconds=env_int("QUERY_OVERLAP_SECONDS", 45),
@@ -983,6 +983,22 @@ def case_variants(value: str) -> List[str]:
     return variants
 
 
+def alert_type_tokens(value: str) -> List[str]:
+    tokens: List[str] = []
+    for raw in re.split(r"[;,|]+", str(value or "")):
+        token = raw.strip()
+        if token and token not in tokens:
+            tokens.append(token)
+    return tokens
+
+
+def configured_alert_type_fallback(value: str) -> str:
+    tokens = alert_type_tokens(value)
+    if tokens:
+        return tokens[0]
+    return str(value or "").strip()
+
+
 def collect_text_candidates(value: Any) -> List[str]:
     collected: List[str] = []
 
@@ -1622,8 +1638,8 @@ class ARMEmulator:
         alert: Dict[str, Any],
         related_records: Optional[Sequence[Dict[str, Any]]] = None,
     ) -> bool:
-        expected = normalize(self.cfg.alert_type_contains)
-        if not expected:
+        expected_tokens = [normalize(token) for token in alert_type_tokens(self.cfg.alert_type_contains) if normalize(token)]
+        if not expected_tokens:
             return True
 
         blobs: List[str] = []
@@ -1637,19 +1653,22 @@ class ARMEmulator:
         if not haystack:
             return False
 
-        pattern = rf"(?<![a-z0-9]){re.escape(expected)}(?![a-z0-9])"
-        return re.search(pattern, haystack, flags=re.IGNORECASE) is not None
+        for expected in expected_tokens:
+            pattern = rf"(?<![a-z0-9]){re.escape(expected)}(?![a-z0-9])"
+            if re.search(pattern, haystack, flags=re.IGNORECASE) is not None:
+                return True
+        return False
 
     def _type_matches(self, alert: Dict[str, Any], related_records: Optional[Sequence[Dict[str, Any]]] = None) -> bool:
-        expected = normalize(self.cfg.alert_type_contains)
-        if not expected:
+        expected_tokens = [normalize(token) for token in alert_type_tokens(self.cfg.alert_type_contains) if normalize(token)]
+        if not expected_tokens:
             return True
 
         raw_candidates = self._field_candidates(alert, 'type', related_records)
         normalized_candidates = [normalize(item) for item in raw_candidates if normalize(item)]
         meaningful_candidates = [item for item in normalized_candidates if not is_sys_id(item)]
 
-        if any(expected in item for item in meaningful_candidates):
+        if any(any(expected in item for expected in expected_tokens) for item in meaningful_candidates):
             return True
 
         if meaningful_candidates:
@@ -1980,8 +1999,9 @@ class ARMEmulator:
         query_parts = []
         if self.cfg.alert_source:
             query_parts.append(f"source={escape_query_value(self.cfg.alert_source)}")
-        if self.cfg.alert_type_contains:
-            query_parts.append(f"typeLIKE{escape_query_value(self.cfg.alert_type_contains)}")
+        type_tokens = alert_type_tokens(self.cfg.alert_type_contains)
+        if type_tokens:
+            query_parts.append("typeLIKE(" + " OR ".join(type_tokens) + ")")
         if self.cfg.alert_query_extra:
             query_parts.append(self.cfg.alert_query_extra)
         query_parts.append("payload looks like Salesforce case")
@@ -2109,9 +2129,37 @@ class ARMEmulator:
                         "verify PUSH_CONNECTOR_URL, alert dedupe fields, and your genericMappedJson connector install"
                     )
 
-                self._patch_incident(incident_ref, full_alert, sf, offering, ci, assignment_group, short_description, description)
-                self._tag_incident(incident_ref)
-                self._update_alert_task(full_alert, incident_ref)
+                post_create_warnings: List[str] = []
+
+                try:
+                    self._patch_incident(incident_ref, full_alert, sf, offering, ci, assignment_group, short_description, description)
+                except Exception as exc:
+                    LOGGER.exception(
+                        "incident enrichment patch failed for alert %s -> incident %s",
+                        alert_number or alert_sys_id,
+                        incident_ref.number or incident_ref.sys_id,
+                    )
+                    post_create_warnings.append(f"incident_patch:{exc}")
+
+                try:
+                    self._update_alert_task(full_alert, incident_ref)
+                except Exception as exc:
+                    LOGGER.exception(
+                        "alert link update failed for alert %s -> incident %s",
+                        alert_number or alert_sys_id,
+                        incident_ref.number or incident_ref.sys_id,
+                    )
+                    post_create_warnings.append(f"alert_link:{exc}")
+
+                try:
+                    self._tag_incident(incident_ref)
+                except Exception as exc:
+                    LOGGER.exception(
+                        "incident tag step raised unexpectedly for alert %s -> incident %s",
+                        alert_number or alert_sys_id,
+                        incident_ref.number or incident_ref.sys_id,
+                    )
+                    post_create_warnings.append(f"incident_tag:{exc}")
 
                 state_record.update(
                     {
@@ -2125,6 +2173,10 @@ class ARMEmulator:
                         "last_action_at": to_sn_datetime(datetime.now(tz=UTC)),
                     }
                 )
+                if post_create_warnings:
+                    state_record["last_post_create_warnings"] = post_create_warnings
+                else:
+                    state_record.pop("last_post_create_warnings", None)
             except Exception as exc:
                 LOGGER.exception("failed processing alert %s", alert_number or alert_sys_id)
                 state_record.update(
@@ -2248,7 +2300,11 @@ class ARMEmulator:
         create_reason: str,
     ) -> Dict[str, Any]:
         source = first_non_empty(raw_value(alert.get("source")), display_value(alert.get("source")), self.cfg.alert_source)
-        alert_type = first_non_empty(display_value(alert.get("type")), raw_value(alert.get("type")), self.cfg.alert_type_contains)
+        alert_type = first_non_empty(
+            display_value(alert.get("type")),
+            raw_value(alert.get("type")),
+            configured_alert_type_fallback(self.cfg.alert_type_contains),
+        )
         node = first_non_empty(raw_value(alert.get("node")), display_value(alert.get("node")), ci.name, "Salesforce")
         resource = first_non_empty(
             raw_value(alert.get("resource")),
@@ -2333,27 +2389,64 @@ class ARMEmulator:
             except Exception:
                 LOGGER.warning("INCIDENT_EXTRA_STATIC_FIELDS_JSON is not valid JSON, ignoring")
 
+        optional_field = self.cfg.incident_generating_alert_field
         try:
             self.client.table_update(self.cfg.incident_table, incident.sys_id, patch)
+            LOGGER.info("patched incident %s (%s)", incident.number or incident.sys_id, incident.sys_id)
+            return
         except RuntimeError as exc:
-            optional_field = self.cfg.incident_generating_alert_field
-            if optional_field and optional_field in patch:
-                retry_patch = dict(patch)
-                retry_patch.pop(optional_field, None)
+            LOGGER.warning(
+                "full incident patch failed for %s (%s); retrying best-effort field updates: %s",
+                incident.number or incident.sys_id,
+                incident.sys_id,
+                exc,
+            )
+
+        applied_fields: List[str] = []
+        failed_fields: List[str] = []
+        optional_field_disabled = False
+
+        for field_name, field_value in patch.items():
+            try:
+                self.client.table_update(self.cfg.incident_table, incident.sys_id, {field_name: field_value})
+                applied_fields.append(field_name)
+            except Exception as exc:
+                failed_fields.append(field_name)
+                if optional_field and field_name == optional_field:
+                    self.cfg.incident_generating_alert_field = ""
+                    optional_field_disabled = True
+                    LOGGER.warning(
+                        "disabled optional incident field %s for the rest of this run after patch rejection: %s",
+                        optional_field,
+                        exc,
+                    )
+                    continue
                 LOGGER.warning(
-                    "incident patch failed with optional field %s present; retrying without it: %s",
-                    optional_field,
+                    "incident field patch rejected for %s (%s): %s -> %s",
+                    incident.number or incident.sys_id,
+                    incident.sys_id,
+                    field_name,
                     exc,
                 )
-                self.client.table_update(self.cfg.incident_table, incident.sys_id, retry_patch)
-                self.cfg.incident_generating_alert_field = ""
-                LOGGER.warning(
-                    "disabled optional incident field %s for the rest of this run after patch rejection",
-                    optional_field,
-                )
-            else:
-                raise
-        LOGGER.info("patched incident %s (%s)", incident.number or incident.sys_id, incident.sys_id)
+
+        if not applied_fields:
+            raise RuntimeError(
+                f"incident patch failed for {incident.number or incident.sys_id}; no fields were accepted"
+            )
+
+        if optional_field_disabled:
+            patch.pop(optional_field, None)
+
+        if failed_fields:
+            LOGGER.warning(
+                "incident %s (%s) patched partially; applied=%s failed=%s",
+                incident.number or incident.sys_id,
+                incident.sys_id,
+                ",".join(applied_fields),
+                ",".join(failed_fields),
+            )
+        else:
+            LOGGER.info("patched incident %s (%s)", incident.number or incident.sys_id, incident.sys_id)
 
     def _tag_incident(self, incident: IncidentRef) -> None:
         if not self.cfg.enable_tagging or not self.cfg.pinc_tag_sys_id:

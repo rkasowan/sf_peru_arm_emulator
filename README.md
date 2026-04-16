@@ -17,6 +17,8 @@ ServiceNow -> off-platform process -> existing DTI
 The main Python runtime watches existing alerts and identifies Salesforce PERU
 cases from the payload that is already stored on the alert and related event
 records, then uses the existing DTI path to create or relink incidents.
+By default it will accept alert type matches for either `Amazon` or `peru`
+case-insensitively.
 
 ## What the Process Does
 
