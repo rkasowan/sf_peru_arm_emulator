@@ -2,6 +2,13 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.4 - 2026-04-16
+
+- disabled PINC tagging by default and stop retrying tag API calls after the first failure in a run
+- disabled DTI fallback by default so the process will not create a second DTI incident when direct incident creation already works
+- made `PUSH_CONNECTOR_URL` optional unless DTI fallback is explicitly enabled
+- updated the installer and local runner defaults so generated configs now default to `ENABLE_TAGGING=false` and `ENABLE_DTI_FALLBACK=false`
+
 ## 2026.04.16.3 - 2026-04-16
 
 - fixed installer reruns so `SN_INSTANCE_URL`, `SN_USERNAME`, `SN_PASSWORD`, and other prompted values default from the deployed config instead of the temporary `.env.example` staging placeholders

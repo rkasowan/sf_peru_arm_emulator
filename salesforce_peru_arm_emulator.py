@@ -176,7 +176,8 @@ class Config:
 
     set_assigned_to: bool = True
     set_caller_id: bool = True
-    enable_tagging: bool = True
+    enable_tagging: bool = False
+    enable_dti_fallback: bool = False
     enable_ci_lookup: bool = True
 
     incident_external_case_field: str = "u_external_salesforce_case_id"
@@ -261,7 +262,8 @@ class Config:
             salesforce_user_sys_id=env("SALESFORCE_USER_SYS_ID", ""),
             set_assigned_to=env_bool("SET_ASSIGNED_TO", True),
             set_caller_id=env_bool("SET_CALLER_ID", True),
-            enable_tagging=env_bool("ENABLE_TAGGING", True),
+            enable_tagging=env_bool("ENABLE_TAGGING", False),
+            enable_dti_fallback=env_bool("ENABLE_DTI_FALLBACK", False),
             enable_ci_lookup=env_bool("ENABLE_CI_LOOKUP", True),
             incident_external_case_field=env("INCIDENT_EXTERNAL_CASE_FIELD", "u_external_salesforce_case_id"),
             incident_generating_alert_field=env("INCIDENT_GENERATING_ALERT_FIELD", "u_generating_alert"),
@@ -274,8 +276,8 @@ class Config:
             closed_state_tokens=env_csv("ALERT_CLOSED_STATE_TOKENS", sorted(STATE_CLOSED_DEFAULT)),
         )
 
-        if not cfg.push_connector_url:
-            raise ValueError("PUSH_CONNECTOR_URL is required for this workaround")
+        if cfg.enable_dti_fallback and not cfg.push_connector_url:
+            raise ValueError("PUSH_CONNECTOR_URL is required when ENABLE_DTI_FALLBACK=true")
 
         return cfg
 
@@ -1541,17 +1543,21 @@ class ARMEmulator:
             push_source = (parse_qs(urlparse(push_url).query).get('source') or [''])[0]
 
         LOGGER.info('ServiceNow instance URL: %s', self.cfg.sn_instance_url)
-        LOGGER.info('Push connector URL: %s', self.cfg.push_connector_url)
+        if self.cfg.enable_dti_fallback:
+            LOGGER.info('DTI fallback: enabled')
+            LOGGER.info('Push connector URL: %s', self.cfg.push_connector_url)
+        else:
+            LOGGER.info('DTI fallback: disabled')
         LOGGER.info('Incident external case field: %s', self.cfg.incident_external_case_field)
         if self.cfg.incident_generating_alert_field:
             LOGGER.info('Incident generating alert field: %s', self.cfg.incident_generating_alert_field)
         else:
             LOGGER.info('Incident generating alert field: not found, skipping')
-        if sn_host and push_host and sn_host != push_host:
+        if self.cfg.enable_dti_fallback and sn_host and push_host and sn_host != push_host:
             LOGGER.warning('SN_INSTANCE_URL host (%s) and PUSH_CONNECTOR_URL host (%s) do not match', sn_host, push_host)
-        if push_source:
+        if self.cfg.enable_dti_fallback and push_source:
             LOGGER.info('Push connector source parameter: %s', push_source)
-        else:
+        elif self.cfg.enable_dti_fallback:
             LOGGER.warning('PUSH_CONNECTOR_URL has no source= query parameter; verify the connector endpoint URL')
 
     def _candidate_key_tokens(self, kind: str) -> Tuple[Tuple[str, ...], Tuple[str, ...]]:
@@ -2071,6 +2077,10 @@ class ARMEmulator:
                         description=description,
                     )
                 except Exception as exc:
+                    if not self.cfg.enable_dti_fallback:
+                        raise RuntimeError(
+                            f"direct incident create failed and DTI fallback is disabled: {exc}"
+                        ) from exc
                     creation_path = "dti_fallback"
                     LOGGER.warning(
                         "direct incident create failed for alert %s; falling back to DTI: %s",
@@ -2545,8 +2555,13 @@ class ARMEmulator:
                 },
             )
             LOGGER.info("tagged incident %s with PINC", incident.number or incident.sys_id)
-        except Exception:
-            LOGGER.exception("failed to tag incident %s with PINC", incident.number or incident.sys_id)
+        except Exception as exc:
+            self.cfg.enable_tagging = False
+            LOGGER.warning(
+                "failed to tag incident %s with PINC; disabling tagging for the rest of this run: %s",
+                incident.number or incident.sys_id,
+                exc,
+            )
 
     def _update_alert_task(self, alert: Dict[str, Any], incident: IncidentRef) -> None:
         alert_sys_id = str(raw_value(alert.get("sys_id")) or "")

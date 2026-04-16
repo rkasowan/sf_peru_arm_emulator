@@ -558,6 +558,8 @@ maybe_prompt_for_config() {
 sync_derived_env_values() {
   set_env_file_value "$SOURCE_ENV_FILE" "STATE_FILE" "$STATE_FILE"
   set_env_file_value "$SOURCE_ENV_FILE" "AUTO_CREATE_SERVICE_OFFERINGS" "false"
+  set_env_file_value "$SOURCE_ENV_FILE" "ENABLE_TAGGING" "false"
+  set_env_file_value "$SOURCE_ENV_FILE" "ENABLE_DTI_FALLBACK" "false"
 }
 
 cleanup_legacy_source_env_file() {
