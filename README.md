@@ -2,7 +2,7 @@
 
 This is the freeze-safe path for the Salesforce PERU workaround.
 
-Repo version: `2026.04.16.4`
+Repo version: `2026.04.16.5`
 Release history: [CHANGELOG.md](CHANGELOG.md)
 
 It does not require changing the existing `genericJsonV2` DTI mechanism on the

@@ -1232,6 +1232,8 @@ def render_incident_description(
     offering: ServiceOfferingRef,
 ) -> str:
     alert_number = first_non_empty(raw_value(alert.get("number")), display_value(alert.get("number")))
+    alert_short_description = first_non_empty(raw_value(alert.get("short_description")), display_value(alert.get("short_description")))
+    alert_description = first_non_empty(raw_value(alert.get("description")), display_value(alert.get("description")))
 
     lines = [
         "SalesForce Case Details",
@@ -1249,8 +1251,14 @@ def render_incident_description(
     ]
     if sf.http_endpoint:
         lines.append(f"SalesForce HTTP Endpoint: {sf.http_endpoint}")
-    if alert_number:
-        lines.extend(["", "ServiceNow Context", "=================", f"Related Alert: {alert_number}"])
+    if alert_number or alert_short_description or alert_description:
+        lines.extend(["", "ServiceNow Context", "================="])
+        if alert_number:
+            lines.append(f"Related Alert: {alert_number}")
+        if alert_short_description:
+            lines.append(f"Alert Short Description: {alert_short_description}")
+        if alert_description:
+            lines.extend(["Alert Description:", alert_description])
     if offering.offering_name:
         lines.append(f"Linked Service Offering: {offering.offering_name}")
     if offering.service_name:

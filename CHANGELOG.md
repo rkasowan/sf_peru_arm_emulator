@@ -2,6 +2,10 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.5 - 2026-04-16
+
+- added the source alert short description and alert description to the rendered incident description so the original alert text is preserved in the incident record
+
 ## 2026.04.16.4 - 2026-04-16
 
 - disabled PINC tagging by default and stop retrying tag API calls after the first failure in a run
