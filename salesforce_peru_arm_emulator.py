@@ -1557,6 +1557,11 @@ class ARMEmulator:
             push_source = (parse_qs(urlparse(push_url).query).get('source') or [''])[0]
 
         LOGGER.info('ServiceNow instance URL: %s', self.cfg.sn_instance_url)
+        LOGGER.info('Incident create table: %s', self.cfg.incident_table)
+        if self.cfg.incident_table != "incident":
+            raise ValueError(
+                f"INCIDENT_TABLE must remain 'incident' for this process; got {self.cfg.incident_table!r}"
+            )
         if self.cfg.enable_dti_fallback:
             LOGGER.info('DTI fallback: enabled')
             LOGGER.info('Push connector URL: %s', self.cfg.push_connector_url)

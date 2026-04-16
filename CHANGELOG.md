@@ -2,6 +2,12 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.9 - 2026-04-16
+
+- added startup logging for the effective incident create table so each run shows exactly which table direct inserts target
+- made startup fail fast unless `INCIDENT_TABLE=incident`, removing any ambiguity about accidental inserts into `task` or another table
+- refreshed the README version and runtime behavior note to match the new startup guard
+
 ## 2026.04.16.8 - 2026-04-16
 
 - added a shared `secret_codec.py` helper and support for `OBFMD5:...` env values so sensitive credentials can be stored obfuscated instead of plain text

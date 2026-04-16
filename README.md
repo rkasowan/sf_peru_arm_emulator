@@ -2,7 +2,7 @@
 
 This is the freeze-safe path for the Salesforce PERU workaround.
 
-Repo version: `2026.04.16.8`
+Repo version: `2026.04.16.9`
 Release history: [CHANGELOG.md](CHANGELOG.md)
 
 It does not require changing the existing `genericJsonV2` DTI mechanism on the
@@ -25,7 +25,8 @@ The main Python runtime watches existing alerts and identifies Salesforce PERU
 cases from the payload that is already stored on the alert and related event
 records, then uses the existing DTI path to create or relink incidents.
 By default it will accept alert type matches for either `Amazon` or `peru`
-case-insensitively.
+case-insensitively. Startup now also logs the effective incident create table
+and refuses to run unless it is exactly `incident`.
 
 ## What the Process Does
 
