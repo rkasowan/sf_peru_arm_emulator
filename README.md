@@ -2,7 +2,7 @@
 
 This is the freeze-safe path for the Salesforce PERU workaround.
 
-Repo version: `2026.04.16.1`
+Repo version: `2026.04.16.2`
 Release history: [CHANGELOG.md](CHANGELOG.md)
 
 It does not require changing the existing `genericJsonV2` DTI mechanism on the
@@ -28,9 +28,10 @@ case-insensitively.
 - matches PERU alerts client-side from the Salesforce payload shape already on
   the alert, so it does not depend on custom event routing or a modified source
   / type mapping
-- creates incidents through the existing DTI connector flow by sending a
-  helper event with a fresh `message_key`, so Alert Management opens a new
-  helper alert and fires the one-time DTI rule again
+- prefers direct incident creation through the `incident` table API when the
+  current environment allows it
+- falls back to the existing DTI connector flow only when direct incident
+  creation fails, then patches the resulting incident afterward
 - handles reopen scenarios by clearing stale alert links before DTI
 - patches the created incident with clean Salesforce case details
 - prefers matching `environment` values on duplicate offerings and CIs when
@@ -42,8 +43,8 @@ case-insensitively.
 - sets the external Salesforce case field, or falls back to `correlation_id`
   when that custom field does not exist
 - stamps the linked alert into `u_generating_alert` when that incident field exists
-- enforces a runtime write policy: create events through `genericJsonV2`, update
-  only `em_alert` and `incident`, and create `label_entry` only for incident tagging
+- enforces a runtime write policy: create only `em_event`, `incident`, and
+  `label_entry`, and update only `em_alert` and `incident`
 
 ## Local PDI Quick Start
 

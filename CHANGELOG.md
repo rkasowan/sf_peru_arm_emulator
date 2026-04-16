@@ -2,6 +2,13 @@
 
 All notable project updates should be recorded here when work is completed and pushed.
 
+## 2026.04.16.2 - 2026-04-16
+
+- switched incident creation to prefer direct `incident` table API inserts and only fall back to DTI when direct create fails
+- stopped preparing or triggering the DTI helper flow unless the direct create path actually fails
+- kept the existing post-create enrichment path so DTI fallback incidents are still patched as completely as possible afterward
+- added creation-path tracking in state so runs show whether an incident came from `table_api` or `dti_fallback`
+
 ## 2026.04.16.1 - 2026-04-16
 
 - made incident enrichment best-effort across environments so a rejected field does not block the rest of the incident update

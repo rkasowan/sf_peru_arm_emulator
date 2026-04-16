@@ -401,7 +401,7 @@ class ServiceNowClient:
         return (self.cfg.alert_table, self.cfg.incident_table)
 
     def _allowed_create_tables(self) -> Tuple[str, ...]:
-        return (self.cfg.event_table, self.cfg.label_entry_table)
+        return (self.cfg.event_table, self.cfg.incident_table, self.cfg.label_entry_table)
 
     def _assert_table_update_allowed(self, table: str) -> None:
         if table not in self._allowed_update_tables():
@@ -2051,7 +2051,6 @@ class ARMEmulator:
         if create_reason:
             try:
                 full_alert = self.client.table_get_record(self.cfg.alert_table, alert_sys_id)
-                previous_task, previous_incident = self._prepare_alert_for_dti(full_alert, create_reason)
                 related_events = self._load_related_events(full_alert)
                 sf = self.extractor.extract(full_alert, related_events)
                 offering = self.cmdb.resolve_service_offering(sf)
@@ -2060,74 +2059,93 @@ class ARMEmulator:
                 workload_token = self._build_workload_token(full_alert)
                 short_description = compose_short_description(full_alert, sf)
                 description = render_incident_description(full_alert, sf, offering)
-                helper_message_key = dti_helper_message_key(workload_token, full_alert, create_reason)
+                incident_ref: Optional[IncidentRef] = None
+                helper_message_key = ""
+                creation_path = "table_api"
 
-                created_after = datetime.now(tz=UTC) - timedelta(seconds=5)
-                push_payload = self._build_push_connector_payload(
-                    alert=full_alert,
-                    sf=sf,
-                    offering=offering,
-                    ci=ci,
-                    assignment_group=assignment_group,
-                    short_description=short_description,
-                    description=description,
-                    workload_token=workload_token,
-                    helper_message_key=helper_message_key,
-                    create_reason=create_reason,
-                )
-                LOGGER.debug("push connector payload for alert %s: %s", alert_number or alert_sys_id, json.dumps(push_payload, sort_keys=True))
-                LOGGER.info(
-                    "sending helper DTI event for alert %s with helper message_key=%s",
-                    alert_number or alert_sys_id,
-                    helper_message_key,
-                )
-                push_response: Dict[str, Any] = {}
-                push_timed_out = False
                 try:
-                    push_response = self.client.push_connector_call(push_payload)
-                    LOGGER.debug("push connector response for alert %s: %s", alert_number or alert_sys_id, json.dumps(push_response, sort_keys=True))
-                    LOGGER.info("push connector accepted alert %s", alert_number or alert_sys_id)
-                except PushConnectorTimeoutError:
-                    push_timed_out = True
-                    LOGGER.warning(
-                        "push connector timed out for alert %s after %ss; waiting up to %ss for any linked incident to appear",
-                        alert_number or alert_sys_id,
-                        self.cfg.push_connector_timeout_seconds,
-                        self.cfg.push_connector_wait_seconds,
+                    incident_ref = self._create_incident_direct(
+                        ci=ci,
+                        assignment_group=assignment_group,
+                        short_description=short_description,
+                        description=description,
                     )
+                except Exception as exc:
+                    creation_path = "dti_fallback"
+                    LOGGER.warning(
+                        "direct incident create failed for alert %s; falling back to DTI: %s",
+                        alert_number or alert_sys_id,
+                        exc,
+                    )
+                    previous_task, previous_incident = self._prepare_alert_for_dti(full_alert, create_reason)
+                    helper_message_key = dti_helper_message_key(workload_token, full_alert, create_reason)
 
-                incident_ref = self.locator.locate(
-                    push_response,
-                    created_after=created_after,
-                    case_number=sf.case_number,
-                    short_description=short_description,
-                    workaround_token=workload_token,
-                    helper_message_key=helper_message_key,
-                    alert_sys_id=alert_sys_id,
-                    previous_task=previous_task,
-                    previous_incident=previous_incident,
-                )
-                connector_failure = describe_push_connector_failure(push_response)
-                if connector_failure and incident_ref is None:
-                    raise RuntimeError(connector_failure)
-                if connector_failure and incident_ref is not None:
-                    LOGGER.warning(
-                        "connector reported a DTI issue for alert %s, but incident %s became visible anyway: %s",
+                    created_after = datetime.now(tz=UTC) - timedelta(seconds=5)
+                    push_payload = self._build_push_connector_payload(
+                        alert=full_alert,
+                        sf=sf,
+                        offering=offering,
+                        ci=ci,
+                        assignment_group=assignment_group,
+                        short_description=short_description,
+                        description=description,
+                        workload_token=workload_token,
+                        helper_message_key=helper_message_key,
+                        create_reason=create_reason,
+                    )
+                    LOGGER.debug("push connector payload for alert %s: %s", alert_number or alert_sys_id, json.dumps(push_payload, sort_keys=True))
+                    LOGGER.info(
+                        "sending helper DTI event for alert %s with helper message_key=%s",
                         alert_number or alert_sys_id,
-                        incident_ref.number or incident_ref.sys_id,
-                        connector_failure,
+                        helper_message_key,
                     )
-                if incident_ref is None:
-                    if push_timed_out:
-                        raise RuntimeError(
-                            f"push connector timed out after {self.cfg.push_connector_timeout_seconds}s and no incident became "
-                            f"visible within {self.cfg.push_connector_wait_seconds}s. Increase "
-                            "PUSH_CONNECTOR_TIMEOUT_SECONDS if this instance responds slowly."
+                    push_response: Dict[str, Any] = {}
+                    push_timed_out = False
+                    try:
+                        push_response = self.client.push_connector_call(push_payload)
+                        LOGGER.debug("push connector response for alert %s: %s", alert_number or alert_sys_id, json.dumps(push_response, sort_keys=True))
+                        LOGGER.info("push connector accepted alert %s", alert_number or alert_sys_id)
+                    except PushConnectorTimeoutError:
+                        push_timed_out = True
+                        LOGGER.warning(
+                            "push connector timed out for alert %s after %ss; waiting up to %ss for any linked incident to appear",
+                            alert_number or alert_sys_id,
+                            self.cfg.push_connector_timeout_seconds,
+                            self.cfg.push_connector_wait_seconds,
                         )
-                    raise RuntimeError(
-                        "push connector call succeeded but no incident could be located on the alert or in the response; "
-                        "verify PUSH_CONNECTOR_URL, alert dedupe fields, and your genericMappedJson connector install"
+
+                    incident_ref = self.locator.locate(
+                        push_response,
+                        created_after=created_after,
+                        case_number=sf.case_number,
+                        short_description=short_description,
+                        workaround_token=workload_token,
+                        helper_message_key=helper_message_key,
+                        alert_sys_id=alert_sys_id,
+                        previous_task=previous_task,
+                        previous_incident=previous_incident,
                     )
+                    connector_failure = describe_push_connector_failure(push_response)
+                    if connector_failure and incident_ref is None:
+                        raise RuntimeError(connector_failure)
+                    if connector_failure and incident_ref is not None:
+                        LOGGER.warning(
+                            "connector reported a DTI issue for alert %s, but incident %s became visible anyway: %s",
+                            alert_number or alert_sys_id,
+                            incident_ref.number or incident_ref.sys_id,
+                            connector_failure,
+                        )
+                    if incident_ref is None:
+                        if push_timed_out:
+                            raise RuntimeError(
+                                f"push connector timed out after {self.cfg.push_connector_timeout_seconds}s and no incident became "
+                                f"visible within {self.cfg.push_connector_wait_seconds}s. Increase "
+                                "PUSH_CONNECTOR_TIMEOUT_SECONDS if this instance responds slowly."
+                            )
+                        raise RuntimeError(
+                            "push connector call succeeded but no incident could be located on the alert or in the response; "
+                            "verify PUSH_CONNECTOR_URL, alert dedupe fields, and your genericMappedJson connector install"
+                        )
 
                 post_create_warnings: List[str] = []
 
@@ -2168,6 +2186,7 @@ class ARMEmulator:
                         "last_incident_sys_id": incident_ref.sys_id,
                         "last_incident_number": incident_ref.number,
                         "last_helper_message_key": helper_message_key,
+                        "last_creation_path": creation_path,
                         "last_action": "created_incident",
                         "last_action_reason": create_reason,
                         "last_action_at": to_sn_datetime(datetime.now(tz=UTC)),
@@ -2184,6 +2203,7 @@ class ARMEmulator:
                         "last_action": "error",
                         "last_error": str(exc),
                         "last_helper_message_key": helper_message_key if 'helper_message_key' in locals() else "",
+                        "last_creation_path": creation_path if 'creation_path' in locals() else "",
                         "last_action_reason": create_reason,
                         "last_action_at": to_sn_datetime(datetime.now(tz=UTC)),
                     }
@@ -2349,6 +2369,67 @@ class ARMEmulator:
             return {"events": [base_payload]}
         return base_payload
 
+    def _incident_extra_static_fields(self) -> Dict[str, Any]:
+        if not self.cfg.incident_extra_static_fields_json:
+            return {}
+        try:
+            extra = json.loads(self.cfg.incident_extra_static_fields_json)
+        except Exception:
+            LOGGER.warning("INCIDENT_EXTRA_STATIC_FIELDS_JSON is not valid JSON, ignoring")
+            return {}
+        if not isinstance(extra, dict):
+            LOGGER.warning("INCIDENT_EXTRA_STATIC_FIELDS_JSON must be a JSON object, ignoring")
+            return {}
+        return dict(extra)
+
+    def _build_direct_incident_create_payload(
+        self,
+        ci: CIChoice,
+        assignment_group: AssignmentGroupRef,
+        short_description: str,
+        description: str,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "short_description": short_description,
+            "description": description,
+        }
+        if ci.sys_id:
+            payload["cmdb_ci"] = ci.sys_id
+        if assignment_group.sys_id:
+            payload["assignment_group"] = assignment_group.sys_id
+        payload.update(self._incident_extra_static_fields())
+        return payload
+
+    def _create_incident_direct(
+        self,
+        ci: CIChoice,
+        assignment_group: AssignmentGroupRef,
+        short_description: str,
+        description: str,
+    ) -> IncidentRef:
+        payload = self._build_direct_incident_create_payload(ci, assignment_group, short_description, description)
+        created = self.client.table_create(self.cfg.incident_table, payload)
+        sys_id = first_non_empty(
+            raw_value(created.get("sys_id")),
+            display_value(created.get("sys_id")),
+            created.get("sys_id"),
+        )
+        if not is_sys_id(sys_id):
+            raise RuntimeError(f"incident table create returned no valid sys_id: {created!r}")
+        number = first_non_empty(
+            display_value(created.get("number")),
+            raw_value(created.get("number")),
+            created.get("number"),
+        )
+        if not number:
+            try:
+                incident = self.client.table_get_record(self.cfg.incident_table, sys_id)
+                number = first_non_empty(display_value(incident.get("number")), raw_value(incident.get("number")))
+            except Exception:
+                LOGGER.warning("created incident %s directly but could not read back its number immediately", sys_id)
+        LOGGER.info("created incident %s (%s) directly via incident table API", number or sys_id, sys_id)
+        return IncidentRef(sys_id=sys_id, number=number)
+
     def _patch_incident(
 
         self,
@@ -2381,13 +2462,7 @@ class ARMEmulator:
             patch["assigned_to"] = self.cfg.salesforce_user_sys_id
         if self.cfg.set_caller_id and self.cfg.salesforce_user_sys_id:
             patch["caller_id"] = self.cfg.salesforce_user_sys_id
-        if self.cfg.incident_extra_static_fields_json:
-            try:
-                extra = json.loads(self.cfg.incident_extra_static_fields_json)
-                if isinstance(extra, dict):
-                    patch.update(extra)
-            except Exception:
-                LOGGER.warning("INCIDENT_EXTRA_STATIC_FIELDS_JSON is not valid JSON, ignoring")
+        patch.update(self._incident_extra_static_fields())
 
         optional_field = self.cfg.incident_generating_alert_field
         try:
